@@ -1,0 +1,483 @@
+---
+title: "DataMining"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(readxl)
+library(corrplot)
+library(lubridate)
+library(psych)
+library(class)
+library(GGally)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(caret)
+library(forecast)
+library(ggcorrplot)
+library(VIM) 
+library(neuralnet)
+library(gains)
+library(randomForest)
+library(lift)
+library(ROCit)
+
+```
+
+```{r}
+R<-read_csv("2017_Vehicle_Level_Crash_Details.csv",show_col_types = FALSE)
+```
+
+```{r}
+# Removed descriptive variables
+RI<-R[,c( "CRASH_SEVERITY_DESCR","WEATH_COND_DESCR","ROAD_SURF_COND_DESCR",
+          "RDWY_JNCT_TYPE_DESCR","TRAF_CNTRL_DEVC_TYPE_DESCR","TRAFY_DESCR_DESCR",
+          "SPEED_LIMIT","WORK_ZONE_RELD_DESCR",
+          "AADT","PK_PCT_CT","AV_PCT_CT","CURB","SURFACE_WD","SURFACE_TP","SHLDR_RT_W","SHLDR_RT_T","NUM_LANES",
+          "MED_WIDTH","MED_TYPE","F_CLASS" ,"FACILITY","OPERATION","STRUCT_CND","TERRAIN",
+          "AMBNT_LIGHT_DESCR","CRASH_TIME")]
+
+#apply(RI, 2, function(col)sum(is.na(col))/length(col)*100)
+RI <- RI[!is.na(RI$PK_PCT_CT),]
+RI <- RI[!is.na(RI$AADT),]
+RI <- RI[!is.na(RI$OPERATION),]
+RI <- RI[!is.na(RI$SURFACE_TP),]
+RI <- RI[!is.na(RI$CRASH_TIME),]
+RI <- RI[!is.na(RI$RDWY_JNCT_TYPE_DESCR),]
+RI <- RI[!is.na(RI$SURFACE_WD),]
+RI <- RI[!is.na(RI$NUM_LANES),]
+RI <- RI[!is.na(RI$CRASH_TIME),]
+RI <- RI[!is.na(RI$SHLDR_RT_W),]
+RI <- RI[!is.na(RI$SHLDR_RT_T),]
+RI <- RI[!is.na(RI$STRUCT_CND),]
+RI <- RI[!is.na(RI$MED_TYPE),]
+RI <- RI[!is.na(RI$CURB),]
+#apply(RI, 2, function(col)sum(is.na(col))/length(col)*100)
+
+
+
+
+m<-which(RI$CRASH_SEVERITY_DESCR=="Not Reported")
+RI[m,1]<-"None"
+m<-which(RI$CRASH_SEVERITY_DESCR=="Unknown")
+RI[m,1]<-"None"
+m<-which(RI$CRASH_SEVERITY_DESCR =="Property damage only (none injured)")
+RI[m,1]<-"None"
+
+q<-which(RI$CRASH_SEVERITY_DESCR == "Non-fatal injury")
+RI[q,1]<-"Injury"
+q<-which(RI$CRASH_SEVERITY_DESCR == "Fatal injury")
+RI[q,1]<-"Injury"
+
+#ggplot(RI,aes(x=CRASH_SEVERITY_DESCR))+geom_bar(stat="count")
+
+
+RI$CRASH_TIME<-hour(RI$CRASH_TIME)
+m<-which(RI$CRASH_TIME>=0 & RI$CRASH_TIME<= 3)
+RI[m,"CRASH"]<-"Midnight"
+m<-which(RI$CRASH_TIME>=4 & RI$CRASH_TIME<= 11)
+RI[m,"CRASH"]<-"Morning"
+m<-which(RI$CRASH_TIME>=12 & RI$CRASH_TIME<= 15)
+RI[m,"CRASH"]<-"Afternoon"
+m<-which(RI$CRASH_TIME>=16 & RI$CRASH_TIME<= 19)
+RI[m,"CRASH"]<-"Evening"
+m<-which(RI$CRASH_TIME>=20 & RI$CRASH_TIME<= 24)
+RI[m,"CRASH"]<-"Night"
+RI$CRASH_TIME<-RI$CRASH
+RI$CRASH<-NULL
+
+RI$WORK_ZONE_RELD_DESCR <- str_to_lower(RI$WORK_ZONE_RELD_DESCR)
+RI$ROAD_SURF_COND_DESCR <- RI$ROAD_SURF_COND_DESCR %>% replace(., sapply(RI$ROAD_SURF_COND_DESCR, function(.) grepl('Not reported|Reported but invalid',.)), "No")
+
+RI$WEATH_COND_DESCR <- str_to_lower(RI$WEATH_COND_DESCR)
+RI$WEATH_COND_DESCR <- RI$WEATH_COND_DESCR %>% replace(., sapply(RI$WEATH_COND_DESCR, function(.) grepl('snow|sleet|hail|ice|severe',.)), "2")
+RI$WEATH_COND_DESCR <- RI$WEATH_COND_DESCR %>% replace(., sapply(RI$WEATH_COND_DESCR, function(.) grepl('rain|fog|smog|smoke',.)), "1")
+RI$WEATH_COND_DESCR <- RI$WEATH_COND_DESCR %>% replace(., sapply(RI$WEATH_COND_DESCR, function(.) !grepl('1|2',.)), "0")
+unique(RI$WEATH_COND_DESCR)
+
+RI <- transform(RI, WEATH_COND_DESCR = as.factor(WEATH_COND_DESCR))
+names(RI)[names(RI) == "WEATH_COND_DESCR"] <- "WEATHER_HAZARD_LEVEL"
+
+#ggplot(RI,aes(x=WEATHER_HAZARD_LEVEL))+geom_bar(stat="count")
+
+
+RI$ROAD_SURF_COND_DESCR <- str_to_lower(RI$ROAD_SURF_COND_DESCR)
+unique(RI$ROAD_SURF_COND_DESCR)
+RI$ROAD_SURF_COND_DESCR <- RI$ROAD_SURF_COND_DESCR %>% replace(., sapply(RI$ROAD_SURF_COND_DESCR, function(.) grepl('snow|ice|water|sand|slush|other',.)), "1")
+RI$ROAD_SURF_COND_DESCR <- RI$ROAD_SURF_COND_DESCR %>% replace(., sapply(RI$ROAD_SURF_COND_DESCR, function(.) !grepl('1',.)), "0")
+RI <- transform(RI, ROAD_SURF_COND_DESCR = as.factor(ROAD_SURF_COND_DESCR))
+names(RI)[names(RI) == "ROAD_SURF_COND_DESCR"] <- "ROAD_SURF_HAZARD_LEVEL"
+ggplot(RI,aes(x=ROAD_SURF_HAZARD_LEVEL))+geom_bar(stat="count")
+
+RI$WORK_ZONE_RELD_DESCR <- str_to_lower(RI$WORK_ZONE_RELD_DESCR)
+unique(RI$WORK_ZONE_RELD_DESCR)
+RI$WORK_ZONE_RELD_DESCR <- RI$WORK_ZONE_RELD_DESCR %>% replace(., sapply(RI$WORK_ZONE_RELD_DESCR, function(.) grepl('no|not reported| but',.)), "no")
+RI$WORK_ZONE_RELD_DESCR <- RI$WORK_ZONE_RELD_DESCR %>% replace(., sapply(RI$WORK_ZONE_RELD_DESCR, function(.) !grepl('no',.)), "yes")
+RI <- transform(RI, WORK_ZONE_RELD_DESCR = as.factor(WORK_ZONE_RELD_DESCR))
+
+
+
+col_names<-names(RI[-c(7,9,10,11,13,15,17,18)])
+RI[,col_names]<-lapply(RI[,col_names],factor)
+
+rm(R)
+
+```
+
+```{r}
+
+
+RI$RDWY_JNCT_TYPE_DESCR <- factor(RI$RDWY_JNCT_TYPE_DESCR, 
+                                  levels = c("Not at junction", "Not reported",
+                                             "Unknown","Driveway" , "Railway grade crossing", 
+                                             "Traffic circle", "T-intersection", "Y-intersection", 
+                                             "Four-way intersection", "Five-point or more",
+                                             "Off-ramp" , "On-ramp"))
+
+RI$TRAF_CNTRL_DEVC_TYPE_DESCR <- factor(RI$TRAF_CNTRL_DEVC_TYPE_DESCR, 
+                                  levels = c("Traffic control signal","Flashing traffic control signal",
+                                             "Railway crossing device","School zone signs","Stop sign", "Warning signs",
+                                             "Yield signs", "Unknown", "Not reported", "No controls" ))
+
+RI$TRAFY_DESCR_DESCR <- factor(RI$TRAFY_DESCR_DESCR, 
+                                  levels = c("One-way, not divided", "Two-way, divided, positive median barrier", "Two-way, divided, unprotected median", 
+                                             "Two-way, not divided", "Not reported", "Reported but invalid", "Unknown" ))
+
+RI$CURB <- factor(RI$CURB, levels = c("None", "Left side only", "Right side only", "Both sides", "Along median only", "All curbs (divided highway)"))
+
+
+RI$SHLDR_RT_T <- factor(RI$SHLDR_RT_T, levels = c("No Shoulder", "Stable - Unruttable compacted subgrade", 
+                                                  "Unstable shoulder", "Hardened bituminous mix or penetration"))
+
+RI$SURFACE_TP <- factor(RI$SURFACE_TP, levels = c("Surface-treated road", "Bituminous concrete road", 
+                                                  "Portland cement concrete road"))
+
+
+
+RI$MED_TYPE <- factor(RI$MED_TYPE, levels = c("None", "Curbed", "Positive barrier - Unspecified", 
+                                              "Unprotected", "Positive barrier - Flexible",
+                                              "Positive barrier - semi-rigid", "Positive barrier - rigid"))
+
+RI$F_CLASS <-factor(RI$F_CLASS, levels = c("Local", "Interstate", "Rural minor arterial or urban principal arterial", "Rural or urban principal arterial",
+                                              "Urban minor arterial or rural major collector", " Urban collector or rural minor collector"))
+RI$FACILITY <-factor(RI$FACILITY, levels = c("Mainline roadway","Collector - Distributor", "Tunnel", "Doubledeck", "Rotary", 
+                                              "Simple ramp", "Ramp - SB/WB", "Ramp - NB/EB"))
+
+RI$STRUCT_CND <-factor(RI$STRUCT_CND, levels = c("Good","Fair", "Deficient", "Intolerable"))
+RI$AMBNT_LIGHT_DESCR <-factor(RI$AMBNT_LIGHT_DESCR, levels = c("Daylight", "Dawn", "Dusk", "Dark - lighted roadway",
+                                                               "Dark - roadway not lighted", "Dark - unknown roadway lighting",
+                                                               "Not Reported" , "Other", "Unknown"))
+RI$CRASH_TIME <-factor(RI$CRASH_TIME, levels = c("Midnight", "Morning", "Afternoon", "Evening", "Night"))
+
+```
+```{r}
+RI[,col_names]<-lapply(RI[,col_names],factor)
+
+RI[,col_names]<-lapply(RI[,col_names],unclass)
+rm(col_names)
+str(RI)
+```
+
+# Data Wrangling
+
+```{r}
+# SPEED_LIMIT is between 5 and 65 in mass. So anything above 65 is an outlier.
+
+ggplot(RI,aes(x=RI$SPEED_LIMIT))+geom_boxplot()
+ggplot(RI, aes(SPEED_LIMIT)) + geom_histogram(bins=30)
+summary(RI$SPEED_LIMIT)
+
+m<-which(RI$SPEED_LIMIT>65)
+RI<-RI[-m,]
+m<-which(RI$SPEED_LIMIT < 5)
+RI<-RI[-m,]
+rm(m)
+m<-which(RI$SPEED_LIMIT %% 5 > 0)
+RI<-RI[-m,]
+rm(m)
+m<-mean(RI$SPEED_LIMIT,na.rm = T)
+
+# Replacing NA values with mean
+RI$SPEED_LIMIT<-replace_na(RI$SPEED_LIMIT,m)
+rm(m)
+ggplot(RI,aes(x=SPEED_LIMIT))+geom_boxplot()
+
+ggplot(RI, aes(SPEED_LIMIT)) + geom_histogram(bins=30)
+summary(RI$SPEED_LIMIT)
+
+
+
+# AV_PCT_CT
+#Attribute Definition: (Combination Truck AADT) - At the coded crash location, the annual Average Daily Traffic for Combination Trucks.
+#ggplot(RI, aes(x=AV_PCT_CT)) + geom_boxplot()
+#ggplot(RI, aes(x=AV_PCT_CT)) + geom_histogram(bins=60)
+summary(RI$AV_PCT_CT)
+
+
+# AADT
+#ggplot(RI,aes(x=AADT))+geom_boxplot()
+#ggplot(RI, aes(x=AADT)) + geom_histogram(bins=60)
+summary(RI$AADT)
+
+
+# PK_PCT_CT cannot be greater than 1 as it is percent.
+
+#ggplot(RI,aes(x=PK_PCT_CT))+geom_boxplot()
+summary(RI$PK_PCT_CT)
+m<-which(RI$PK_PCT_CT>1)
+RI<-RI[-m,]
+m<-mean(RI$PK_PCT_CT,na.rm = T)
+RI$PK_PCT_CT<-replace_na(RI$PK_PCT_CT,m)
+rm(m)
+summary(RI$PK_PCT_CT)
+
+
+
+# Med-width
+
+#ggplot(RI,aes(x=RI$MED_WIDTH))+geom_histogram(bins = 20)
+m<-which(RI$MED_WIDTH==0)
+RI$MED_WIDTH<-replace_na(RI$MED_WIDTH,0)
+
+summary(RI)
+
+RI<-na.omit(RI)
+col_names<-names(RI[-c(7,9,10,11,13,15,17,18)])
+RI[,col_names]<-lapply(RI[,col_names],factor)
+
+RI[,col_names]<-lapply(RI[,col_names],unclass)
+rm(col_names)
+str(RI)
+rm(m,q)
+```
+
+
+# PCA
+```{r}
+
+col_names<-names(RI)
+RI[,col_names]<-lapply(RI[,col_names],as.numeric)
+
+
+RIT<-as.tibble(scale(RI))
+RIT$CRASH_SEVERITY_DESCR<-RI$CRASH_SEVERITY_DESCR
+RI.scale<-RIT
+rm(RIT)
+
+
+col_names<-names(RI.scale)
+RI.scale[,col_names]<-lapply(RI.scale[,col_names],as.numeric)
+RI.cor<-cor(RI.scale)
+corrplot(RI.cor,tl.cex = 0.7)
+
+#fa.parallel(RI.scale[,2:26], fa = "pc", n.iter = 100, show.legend = FALSE,main="Scree Plot with Parallel Analysis")
+# 8 PCA  components
+
+RI.pc <- principal(RI.scale[,2:26], nfactors = 8, rotate = "none", scores = TRUE)
+RI.pc
+RI.pc <- cbind(as.data.frame(RI.pc$scores), RI.scale$CRASH_SEVERITY_DESCR) %>%
+rename(CRASH_SEVERITY_DESCR = "RI.scale$CRASH_SEVERITY_DESCR")
+
+
+RI.pc.cor<-cor(RI.pc[-9])
+corrplot(RI.pc.cor,tl.cex = 0.7)
+rm(col_names,RI.cor,RI.pc.cor)
+
+```
+
+#Splitting PCA Data
+```{r}
+set.seed(100)
+train_index <- sample(1:nrow(RI.pc),0.6*nrow(RI.pc))
+valid_index <- sample(setdiff(1:nrow(RI.pc),train_index),0.2*nrow(RI.pc)) 
+test_index <- setdiff(1:nrow(RI.pc), union(train_index, valid_index))
+
+
+train_df_pca <- RI.pc[train_index, ] 
+valid_df_pca <- RI.pc[valid_index, ] 
+test_df_pca<-RI.pc[test_index,]
+
+
+
+col_names<-names(RI[-c(7,9,10,11,13,18)])
+RI[,col_names]<-lapply(RI[,col_names],factor)
+str(RI)
+RI$SPEED_LIMIT<-scale(RI$SPEED_LIMIT)
+RI$AADT<-scale(RI$AADT)
+RI$PK_PCT_CT<-scale(RI$PK_PCT_CT)
+RI$AV_PCT_CT<-scale(RI$AV_PCT_CT)
+RI$SURFACE_WD<-scale(RI$SURFACE_WD)
+RI$MED_WIDTH<-scale(RI$MED_WIDTH)
+rm(col_names)
+
+train_index <- sample(1:nrow(RI.pc),0.6*nrow(RI.pc))
+valid_index <- sample(setdiff(1:nrow(RI.pc),train_index),0.4*nrow(RI.pc))
+
+train_df_orig <- RI[train_index, ] 
+valid_df_orig <- RI[valid_index, ] 
+
+
+rm(train_index,valid_index,test_index)
+
+```
+
+# KNN(1)
+
+```{r}
+#(On PCA)
+knn_RI<- knn(train = train_df_pca[,-9, drop = T], test = valid_df_pca[,-9, drop = T], cl = train_df_pca[,9], k = 3)
+print(table(knn_RI,valid_df_pca[,9]))
+#8649
+knn_RI<- knn(train = train_df_pca[,-9, drop = T], test = valid_df_pca[,-9, drop = T], cl = train_df_pca[,9], k = 5)
+table(knn_RI,valid_df_pca[,9])
+#8177 
+knn_RI<- knn(train = train_df_pca[,-9, drop = T], test = valid_df_pca[,-9, drop = T], cl = train_df_pca[,9], k = 6)
+table(knn_RI,valid_df_pca[,9])
+#8327
+#5 is the best value of K
+rm(knn_RI)
+
+knn_RI_pca_test <- knn(train = train_df_pca[,-9, drop = T], test = test_df_pca[,-9, drop = T], cl = train_df_pca[,9], k = 5)
+
+
+
+
+knn.pred_prob<-knn(train = train_df_pca[,-9, drop = T], test = test_df_pca[,-9, drop = T], cl = train_df_pca[,9], k = 5,prob = T)
+knn.prob<-attributes(knn.pred_prob)$prob
+print(table(knn_RI_pca_test,test_df_pca[,9]))
+confusionMatrix(knn_RI_pca_test,as.factor(test_df_pca[,9]))
+#72.27%
+
+plotLift(knn_RI_pca_test, test_df_pca$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100)
+
+roc_emp <- rocit(knn.prob,test_df_pca$CRASH_SEVERITY_DESCR)
+plot(roc_emp, values=F)
+
+
+rm(knn_RI_pca_test)
+
+
+
+```
+
+```{r}
+rm(train_df_pca,valid_df_pca,test_df_pca)
+train_index <- sample(1:nrow(RI.pc),0.6*nrow(RI.pc))
+valid_index <- sample(setdiff(1:nrow(RI.pc),train_index),0.4*nrow(RI.pc))
+train_df_pca <- RI.pc[train_index, ] 
+valid_df_pca <- RI.pc[valid_index, ] 
+#train_df_pca$CRASH_SEVERITY_DESCR<-as.factor(train_df_pca$CRASH_SEVERITY_DESCR)
+#valid_df_pca$CRASH_SEVERITY_DESCR<-as.factor(valid_df_pca$CRASH_SEVERITY_DESCR)
+```
+
+
+# Naive Bayes(2)
+
+```{r}
+#(On Original Dataset)
+
+nb<- naiveBayes(CRASH_SEVERITY_DESCR ~ ., data = train_df_orig)
+nb.pred_valid <- predict(nb,valid_df_orig[,-1])
+nb_pred_valid_prob<-predict(nb,valid_df_orig[,-1],type = "raw")
+nb_probabilities<-nb_pred_valid_prob[,2]
+
+confusionMatrix(nb.pred_valid, as.factor(valid_df_orig$CRASH_SEVERITY_DESCR))
+#73.59%
+
+plotLift(nb.pred_valid, valid_df_orig$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100)
+
+roc_emp <- rocit(nb_probabilities,valid_df_orig$CRASH_SEVERITY_DESCR)
+plot(roc_emp, values=F)
+
+#rm(nb,nb.pred_test,nb.pred_valid)
+```
+
+# Random Forest(3)
+
+```{r}
+#(On Original Dataset)
+rf<-randomForest(as.factor(CRASH_SEVERITY_DESCR)~.,data=train_df_orig)
+rf
+confusionMatrix(predict(rf,valid_df_orig[,-1],type="class"),
+                as.factor(valid_df_orig[,1]))
+
+rf.pred_prob<-predict(rf,valid_df_orig[,-1],type="prob")
+rf.prob<-rf.pred_prob[,2]
+
+plotLift(predict(rf,valid_df_orig[,-1],type="class"), valid_df_orig$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100)
+
+roc_emp <- rocit(rf.prob,valid_df_orig$CRASH_SEVERITY_DESCR)
+plot(roc_emp, values=F)
+#84.02
+
+```
+
+# Logistic Regression (4)
+```{r}
+#(On PCA)
+lr <- glm(as.factor(CRASH_SEVERITY_DESCR)~., train_df_pca, family = "binomial")
+
+
+lr_valid<- predict(lr,valid_df_pca[,-9], type = "response")
+lr.pred_prob<- predict(lr,valid_df_pca[,-9], type = "response")
+
+
+confusionMatrix(as.factor(ifelse(lr_valid>= 0.68,2,1)),as.factor(valid_df_pca[,9]),positive = "2")
+#73.82%
+
+plotLift(lr_valid, valid_df_pca$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100,)
+
+roc_emp <- rocit(lr.pred_prob,valid_df_pca$CRASH_SEVERITY_DESCR)
+plot(roc_emp, values=F)
+
+rm(lr)
+```
+
+# Neral Network(5)
+
+```{r}
+#(On PCA)
+train_df_pca$CRASH_SEVERITY_DESCR<-as.factor(train_df_pca$CRASH_SEVERITY_DESCR)
+valid_df_pca$CRASH_SEVERITY_DESCR<-as.factor(valid_df_pca$CRASH_SEVERITY_DESCR)
+nn=neuralnet(CRASH_SEVERITY_DESCR~.,data=train_df_pca, hidden=3,act.fct = "logistic",
+                linear.output = FALSE)
+
+plot(nn)
+
+nn.pred=compute(nn,valid_df_pca[-9])
+prob<-nn.pred$net.result
+nn.pred.out <- ifelse(nn.pred$net.result[,1]>0.5, 2,1 )
+confusionMatrix(as.factor(nn.pred.out),as.factor(valid_df_pca[,9]))
+
+plotLift(nn.pred.out, valid_df_pca$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100)
+
+
+nn.pred_prob<-prob[,1]
+roc_emp <- rocit(nn.pred_prob,valid_df_pca$CRASH_SEVERITY_DESCR)
+plot(roc_emp, values=F)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
