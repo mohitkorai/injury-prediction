@@ -438,31 +438,6 @@ plot(roc_emp, values=F)
 rm(lr)
 ```
 
-# Neral Network(5)
-
-```{r}
-#(On PCA)
-train_df_pca$CRASH_SEVERITY_DESCR<-as.factor(train_df_pca$CRASH_SEVERITY_DESCR)
-valid_df_pca$CRASH_SEVERITY_DESCR<-as.factor(valid_df_pca$CRASH_SEVERITY_DESCR)
-nn=neuralnet(CRASH_SEVERITY_DESCR~.,data=train_df_pca, hidden=3,act.fct = "logistic",
-                linear.output = FALSE)
-
-plot(nn)
-
-nn.pred=compute(nn,valid_df_pca[-9])
-prob<-nn.pred$net.result
-nn.pred.out <- ifelse(nn.pred$net.result[,1]>0.5, 2,1 )
-confusionMatrix(as.factor(nn.pred.out),as.factor(valid_df_pca[,9]))
-
-plotLift(nn.pred.out, valid_df_pca$CRASH_SEVERITY_DESCR, cumulative = TRUE, n.buckets = 100)
-
-
-nn.pred_prob<-prob[,1]
-roc_emp <- rocit(nn.pred_prob,valid_df_pca$CRASH_SEVERITY_DESCR)
-plot(roc_emp, values=F)
-
-```
-
 
 
 
